@@ -11,6 +11,5 @@ repository = "https://github.com/NathanRoyer/rustgit"
 log = "0.4"
 sha1 = "0.10.5"
 coolssh = "1.1.0"
-simplelog = "0.12.1"
 lmfu = { version = "1.0.3", default-features = false, features = [ "litemap", "hashmap", "arcstr" ] }
 miniz_oxide = "0.7.1"

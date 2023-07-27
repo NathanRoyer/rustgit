@@ -33,44 +33,6 @@ pub mod internals {
     };
 }
 
-fn init_logger() {
-    use simplelog::*;
-    let config = ConfigBuilder::new().set_location_level(LevelFilter::Off).build();
-    let _ = SimpleLogger::init(LevelFilter::Info, config);
-}
-
-pub fn main() {
-    init_logger();
-
-    // ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG9CxFv9WFeHieOU9EsHXqzX1cT7YQPjlcn8wMlN2ZOf nathan.royer.pro@gmail.com
-
-    let keypair = Keypair::from_bytes(&[
-        229, 103, 222, 234, 170, 135, 159, 143,
-        181, 187,  72, 156, 143, 178, 238, 187,
-        187, 172, 117, 237, 230, 198, 174, 116,
-         96,  35,  40, 192, 102, 198,  86, 137,
-        111,  66, 196,  91, 253,  88,  87, 135,
-        137, 227, 148, 244,  75,   7,  94, 172,
-        215, 213, 196, 251,  97,   3, 227, 149,
-        201, 252, 192, 201,  77, 217, 147, 159,
-    ]).unwrap();
-
-    let remote = Remote::new("github.com:22", "git", "NathanRoyer/rustgit.git", &keypair);
-
-    let mut repo = Repository::new();
-    repo.clone(remote, Reference::Branch("main"), Some(1)).unwrap();
-
-    repo.stage("content.txt", Some(("Hello World!".into(), FileType::RegularFile))).unwrap();
-    let new_head = repo.commit(
-        "Tried a force push",
-        ("Nathan Royer", "nathan.royer.pro@gmail.com"),
-        ("Nathan Royer", "nathan.royer.pro@gmail.com"),
-        None,
-    ).unwrap();
-
-    repo.push(remote, &[("abc", new_head)], true).unwrap();
-}
-
 /// SSH & Remote Repository Settings
 #[derive(Debug, Copy, Clone)]
 pub struct Remote<'a> {
