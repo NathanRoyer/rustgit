@@ -11,17 +11,20 @@ mod packfile;
 mod clone;
 mod push;
 
-pub use {repository::Repository, directory::{Mode, EntryType, FileType}, clone::Reference};
+pub use {
+    repository::Repository, directory::{Mode, EntryType, FileType},
+    clone::Reference, objectstore::Hash,
+};
 
 /// object store, directories, packfiles, git protocol
 pub mod internals {
     pub(crate) use super::{
         TcpStream, Write, Remote, Result, Error, Repository,
-        EntryType, FileType, Mode,
+        EntryType, FileType, Mode, Hash,
     };
     pub use {
         super::objectstore::{
-            ObjectStore, Object, ObjectType, Hash, TreeIter, CommitParentsIter,
+            ObjectStore, Object, ObjectType, TreeIter, CommitParentsIter,
             CommitField, get_commit_field, get_commit_field_hash,
         },
         super::directory::{Directory, Path},

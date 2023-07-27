@@ -141,6 +141,17 @@ impl Repository {
         self.any_store_get(hash, ObjectType::Blob).ok_or(Error::MissingObject)
     }
 
+    /// Returns the content of a file that was staged or commited before.
+    ///
+    /// Returns `PathError` if the path leads to nowhere.
+    pub fn file_exists(&mut self, path: &str) -> Result<bool> {
+        match self.read_file(path) {
+            Ok(_) => Ok(true),
+            Err(Error::PathError) => Ok(false),
+            e => e.map(|_| unreachable!()),
+        }
+    }
+
     /// Returns the content of a textual file that was staged or commited before.
     ///
     /// Returns `PathError` if the path leads to nowhere.

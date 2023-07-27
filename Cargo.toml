@@ -1,7 +1,7 @@
 [package]
 name = "rustgit"
-description = "Clone, commit, push, all in RAM"
-version = "1.0.0"
+description = "Pure-rust Git Client"
+version = "1.0.1"
 edition = "2021"
 authors = [ "Nathan ROYER <nathan.royer.pro@gmail.com>" ]
 license = "MIT"
