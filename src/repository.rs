@@ -1,5 +1,6 @@
 use core::str::from_utf8;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::RwLock;
 use lmfu::LiteMap;
 
 use super::internals::{
@@ -9,7 +10,7 @@ use super::internals::{
 
 /// Local repository residing in memory
 pub struct Repository {
-    pub(crate) directories: LiteMap<Hash, Directory>,
+    pub(crate) directories: RwLock<LiteMap<Hash, Directory>>,
     pub(crate) objects: ObjectStore,
     pub(crate) staged: ObjectStore,
     pub(crate) upstream_head: Hash,
@@ -21,7 +22,7 @@ impl Repository {
     /// Creates an empty repository.
     pub fn new() -> Self {
         Self {
-            directories: LiteMap::new(),
+            directories: RwLock::new(LiteMap::new()),
             objects: ObjectStore::new(),
             staged: ObjectStore::new(),
             upstream_head: Hash::zero(),
@@ -37,6 +38,7 @@ impl Repository {
         }
     }
 
+    /// None = MissingObject for this hash
     pub(crate) fn try_find_dir(&self, hash: Hash) -> Result<Option<Directory>> {
         let mut iter = match self.any_store_get(hash, ObjectType::Tree) {
             Some(entries) => TreeIter::new(entries),
@@ -63,20 +65,26 @@ impl Repository {
     }
 
     pub(crate) fn remove_dir(&mut self, dir_hash: Hash) -> Result<Directory> {
-        match self.directories.remove(&dir_hash) {
+        let dirs_mut = self.directories.get_mut().unwrap();
+        match dirs_mut.remove(&dir_hash) {
             Some(dir) => Ok(dir),
             None => self.find_dir(dir_hash),
         }
     }
 
-    pub(crate) fn get_dir(&mut self, hash: Hash) -> Result<Option<&Directory>> {
-        if let None = self.directories.get(&hash) {
-            if let Some(dir) = self.try_find_dir(hash)? {
-                self.directories.insert(hash, dir);
-            }
+    pub(crate) fn fetch_dir(&self, hash: Hash) -> Result<()> {
+        let present = {
+            let dirs = self.directories.read().unwrap();
+            dirs.contains_key(&hash)
+        };
+
+        if !present {
+            let dir = self.try_find_dir(hash)?.ok_or(Error::MissingObject)?;
+            let mut dirs_mut = self.directories.write().unwrap();
+            dirs_mut.insert(hash, dir);
         }
 
-        Ok(self.directories.get(&hash))
+        Ok(())
     }
 
     pub(crate) fn get_commit_root(&self, commit_hash: Hash) -> Result<Option<Hash>> {
@@ -89,19 +97,19 @@ impl Repository {
         }
     }
 
-    pub(crate) fn find_in_dir(&mut self, dir: Hash, node: &str, filter: EntryType) -> Result<(Hash, Mode)> {
-        match self.get_dir(dir)? {
-            Some(directory) => match directory.get(node) {
-                Some((hash, mode)) => match mode.matches(filter) {
-                    true => Ok((*hash, *mode)),
-                    false => {
-                        log::error!("wrong file type for {}: {:?} doesn't match {:?}", node, mode, filter);
-                        Err(Error::PathError)
-                    },
+    pub(crate) fn find_in_dir(&self, dir: Hash, node: &str, filter: EntryType) -> Result<(Hash, Mode)> {
+        self.fetch_dir(dir)?;
+        let dirs = self.directories.read().unwrap();
+        let directory = dirs.get(&dir).unwrap(/* fetch_dir ensures it's there */);
+        match directory.get(node) {
+            Some((hash, mode)) => match mode.matches(filter) {
+                true => Ok((*hash, *mode)),
+                false => {
+                    log::error!("wrong file type for {}: {:?} doesn't match {:?}", node, mode, filter);
+                    Err(Error::PathError)
                 },
-                None => Err(Error::PathError),
             },
-            None => Err(Error::MissingObject),
+            None => Err(Error::PathError),
         }
     }
 
@@ -109,7 +117,9 @@ impl Repository {
     /// that was staged or commited before.
     ///
     /// Returns `PathError` if the path leads to nowhere.
-    pub fn read_dir(&mut self, path: &str, entry_type: EntryType) -> Result<impl Iterator<Item = (Mode, &str)>> {
+    ///
+    /// This can write-lock an internal RwLock for cache.
+    pub fn for_each_entry<F: FnMut(&str, Mode, Hash)>(&self, path: &str, entry_type: EntryType, mut callback: F) -> Result<()> {
         let path = Path::new(path);
         let mut current = self.root.ok_or(Error::PathError)?;
 
@@ -117,19 +127,24 @@ impl Repository {
             current = self.find_in_dir(current, subdir, EntryType::Directory)?.0;
         }
 
-        let directory = self.get_dir(current)?.ok_or(Error::MissingObject)?;
-        Ok(directory.iter().filter_map(move |(node, (_, mode))| {
-            match mode.matches(entry_type) {
-                true => Some((*mode, node.as_str())),
-                false => None,
+        self.fetch_dir(current)?;
+        let dirs = self.directories.read().unwrap();
+        let directory = dirs.get(&current).unwrap(/* fetch_dir ensures it's there */);
+        for (node, (hash, mode)) in directory.iter() {
+            if mode.matches(entry_type) {
+                callback(node.as_str(), *mode, *hash);
             }
-        }))
+        }
+
+        Ok(())
     }
 
     /// Returns the content of a file that was staged or commited before.
     ///
     /// Returns `PathError` if the path leads to nowhere.
-    pub fn read_file(&mut self, path: &str) -> Result<&[u8]> {
+    ///
+    /// This can write-lock an internal RwLock for cache.
+    pub fn read_file(&self, path: &str) -> Result<&[u8]> {
         let path = Path::new(path);
         let mut current = self.root.ok_or(Error::PathError)?;
 
@@ -144,7 +159,9 @@ impl Repository {
     /// Returns the content of a file that was staged or commited before.
     ///
     /// Returns `PathError` if the path leads to nowhere.
-    pub fn file_exists(&mut self, path: &str) -> Result<bool> {
+    ///
+    /// This can write-lock an internal RwLock for cache.
+    pub fn file_exists(&self, path: &str) -> Result<bool> {
         match self.read_file(path) {
             Ok(_) => Ok(true),
             Err(Error::PathError) => Ok(false),
@@ -156,7 +173,9 @@ impl Repository {
     ///
     /// Returns `PathError` if the path leads to nowhere.
     /// Returns `InvalidObject` if the file contains non-utf-8 bytes.
-    pub fn read_text(&mut self, path: &str) -> Result<&str> {
+    ///
+    /// This can write-lock an internal RwLock for cache.
+    pub fn read_text(&self, path: &str) -> Result<&str> {
         match from_utf8(self.read_file(path)?) {
             Ok(string) => Ok(string),
             Err(_) => Err(Error::InvalidObject),
@@ -196,7 +215,7 @@ impl Repository {
 
             if let Some(subdir) = self.update_dir(subdir, steps, file_name, data)? {
                 let hash = self.staged.serialize_directory(&subdir, delta_hint);
-                self.directories.insert(hash, subdir);
+                self.directories.get_mut().unwrap().insert(hash, subdir);
                 result = Some((hash, Mode::Directory));
             }
         } else {
@@ -249,7 +268,7 @@ impl Repository {
                 self.staged.remove(hash);
             }
 
-            self.directories.insert(hash, root_dir);
+            self.directories.get_mut().unwrap().insert(hash, root_dir);
             self.root = Some(hash);
         } else {
             self.root = None;
@@ -264,14 +283,14 @@ impl Repository {
 
                 // mem::replace
                 // this unwrap is questionable
-                let dir = self.directories.insert(hash, Directory::new()).unwrap();
+                let dir = self.directories.get_mut().unwrap().insert(hash, Directory::new()).unwrap();
 
                 for (hash, _mode) in dir.iter_values() {
                     self.commit_object(*hash);
                 }
 
                 // mem::replace
-                self.directories.insert(hash, dir).unwrap();
+                self.directories.get_mut().unwrap().insert(hash, dir).unwrap();
             }
 
             self.objects.insert_entry(dir_entry);
@@ -335,6 +354,8 @@ impl Repository {
     }
 
     /// Resets the current commit to the branch head in upstream
+    ///
+    /// Changes from the discarded commits are still present (staged).
     pub fn discard_commits(&mut self) {
         self.head = self.upstream_head;
     }
@@ -342,7 +363,7 @@ impl Repository {
     /// Discard changes that weren't commited
     pub fn discard_changes(&mut self) {
         self.staged = ObjectStore::new();
-        self.directories.clear();
+        self.directories.get_mut().unwrap().clear();
         self.root = self.get_commit_root(self.head).unwrap();
     }
 
