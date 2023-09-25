@@ -5,7 +5,7 @@ version = "1.1.0"
 edition = "2021"
 authors = [ "Nathan ROYER <nathan.royer.pro@gmail.com>" ]
 license = "MIT"
-keywords = [ "git", "commit", "push", "clone", "protocol", "repository" ]
+keywords = [ "git", "commit", "push", "clone", "repository" ]
 categories = [ "development-tools" ]
 repository = "https://github.com/NathanRoyer/rustgit"
 
