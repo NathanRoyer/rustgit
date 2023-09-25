@@ -10,15 +10,15 @@ impl Repository {
     /// Push committed changes upstream
     pub fn push(
         &mut self,
-        remote: Remote,
+        remote: &Remote,
         updated_heads: &[(&str, Hash)],
         force_push: bool,
     ) -> Result<()> {
         let iter = updated_heads.iter().map(|(name, hash)| (*name, (*hash, Hash::zero())));
         let mut head_map = LiteMap::<&str, (Hash, Hash), Vec<_>>::from_iter(iter);
 
-        let stream = TcpStream::connect(remote.host).unwrap();
-        let auth = (remote.username, remote.keypair).into();
+        let stream = TcpStream::connect(&*remote.host).unwrap();
+        let auth = (&*remote.username, &*remote.keypair).into();
         let mut conn = Connection::new(stream, auth)?;
 
         conn.mutate_stream(|stream| {

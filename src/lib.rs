@@ -1,7 +1,8 @@
 #![doc = include_str!("../README.md")]
 
-use coolssh::{Keypair, Error as SshError};
 use std::{net::TcpStream, io::Write};
+use lmfu::{json::{JsonFile, Path as JsonPath}, ArcStr};
+pub use coolssh::{create_ed25519_keypair, dump_ed25519_pk_openssh, Error as SshError};
 
 mod objectstore;
 mod repository;
@@ -37,31 +38,54 @@ pub mod internals {
 }
 
 /// SSH & Remote Repository Settings
-#[derive(Debug, Copy, Clone)]
-pub struct Remote<'a> {
+#[derive(Debug)]
+pub struct Remote {
     /// `github.com:22`
-    pub host: &'a str,
+    pub host: ArcStr,
     /// `git`
-    pub username: &'a str,
+    pub username: ArcStr,
     /// `Username/Repository.git`
-    pub path: &'a str,
+    pub path: ArcStr,
     /// Must be registered at the remote
-    pub keypair: &'a Keypair,
+    pub keypair: ArcStr,
 }
 
-impl<'a> Remote<'a> {
+impl Remote {
     pub fn new(
-        host: &'a str,
-        username: &'a str,
-        path: &'a str,
-        keypair: &'a Keypair,
-    ) -> Remote<'a> {
+        host: ArcStr,
+        username: ArcStr,
+        path: ArcStr,
+        keypair: ArcStr,
+    ) -> Remote {
         Self {
             host,
             username,
             path,
             keypair,
         }
+    }
+
+    /// Reads remote access configuration from a [`JsonFile`]
+    ///
+    /// At `path`, the json file is expected to contain an
+    /// object with the following keys:
+    /// - `host`: SSH host (example: `github.com:22`)
+    /// - `username`: SSH username (usually `git`)
+    /// - `path`: path to the git repository
+    /// - `keypair_hex`: 128-characters long hex-encoded key pair
+    pub fn parse(json: &JsonFile, path: &JsonPath) -> core::result::Result<Self, &'static str> {
+        let get = |prop, msg| json.get(&path.clone().i_str(prop)).as_string().ok_or(msg).cloned();
+        let username = get("username", "Invalid username in json remote config")?;
+        let keypair = get("keypair_hex", "Invalid keypair in json remote config")?;
+        let host = get("host", "Invalid host in json remote config")?;
+        let path = get("path", "Invalid path in json remote config")?;
+
+        Ok(Self {
+            host,
+            username,
+            path,
+            keypair,
+        })
     }
 }
 
@@ -73,6 +97,7 @@ pub enum Error {
     InvalidObject,
     PathError,
     MissingObject,
+    NoSuchReference,
     GitProtocolError,
     InvalidPackfile,
     MustForcePush,

@@ -6,6 +6,7 @@ use super::internals::{
 };
 
 /// Specifies what to clone from a remote repository
+#[derive(Debug)]
 pub enum Reference<'a> {
     Head,
     Commit(Hash),
@@ -15,9 +16,13 @@ pub enum Reference<'a> {
 use Reference::{Head, Branch};
 
 impl Repository {
+    /// Imports objects from a remote repository based on a reference
+    ///
+    /// Note: Can return `Err(GitProtocolError)` when an invalid Commit
+    /// reference is specified (one which doesn't exist on the remote end).
     pub fn clone(
         &mut self,
-        remote: Remote,
+        remote: &Remote,
         reference: Reference,
         depth: Option<usize>,
     ) -> Result<()> {
@@ -26,8 +31,8 @@ impl Repository {
             return Err(Error::DirtyWorkspace);
         }
 
-        let stream = TcpStream::connect(remote.host).unwrap();
-        let mut conn = Connection::new(stream, (remote.username, remote.keypair).into())?;
+        let stream = TcpStream::connect(&*remote.host).unwrap();
+        let mut conn = Connection::new(stream, (&*remote.username, &*remote.keypair).into())?;
 
         conn.mutate_stream(|stream| {
             let duration = std::time::Duration::from_millis(1000);
@@ -81,6 +86,11 @@ impl Repository {
                         }
                     }
                 }
+            }
+
+            if self.head == Hash::zero() {
+                log::error!("Reference {:?} wasn't advertised by remote server", reference);
+                return Err(Error::NoSuchReference);
             }
         }
 
